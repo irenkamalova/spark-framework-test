@@ -1,7 +1,10 @@
 package com.test;
 
+import org.eclipse.jetty.servlet.ServletContextHandler;
 import spark.Service;
 import spark.Session;
+import spark.embeddedserver.jetty.websocket.WebSocketHandlerWrapper;
+import spark.embeddedserver.jetty.websocket.WebSocketServletContextHandlerFactory;
 
 import javax.servlet.Servlet;
 import javax.servlet.ServletConfig;
@@ -9,6 +12,8 @@ import javax.servlet.ServletContext;
 import javax.servlet.http.HttpSession;
 
 import java.util.Enumeration;
+import java.util.Map;
+import java.util.Optional;
 
 import static spark.Service.ignite;
 import static spark.Spark.*;
@@ -33,5 +38,11 @@ public class HelloWorld {
             // even attr will be the same!
             return attr;
         });
+    }
+
+    private static void createServer() {
+
+        Service ignite = ignite();
+        // no way to get out jetty embedded server
     }
 }
