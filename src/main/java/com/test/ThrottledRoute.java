@@ -9,7 +9,6 @@ import org.eclipse.jetty.util.log.Log;
 import org.eclipse.jetty.util.log.Logger;
 import org.eclipse.jetty.util.thread.ScheduledExecutorScheduler;
 import org.eclipse.jetty.util.thread.Scheduler;
-import spark.FilterImpl;
 import spark.Request;
 import spark.Response;
 import spark.RouteImpl;
@@ -47,9 +46,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class SparkDoSFilter extends FilterImpl {
-    
-    private static final Logger LOG = Log.getLogger(SparkDoSFilter.class);
+public class ThrottledRoute extends RouteImpl {
+
+    private static final Logger LOG = Log.getLogger(ThrottledRoute.class);
 
     private static final String IPv4_GROUP = "(\\d{1,3})";
     private static final Pattern IPv4_PATTERN = Pattern.compile(IPv4_GROUP + "\\." + IPv4_GROUP + "\\." + IPv4_GROUP + "\\." + IPv4_GROUP);
@@ -57,8 +56,8 @@ public class SparkDoSFilter extends FilterImpl {
     private static final Pattern IPv6_PATTERN = Pattern.compile(IPv6_GROUP + ":" + IPv6_GROUP + ":" + IPv6_GROUP + ":" + IPv6_GROUP + ":" + IPv6_GROUP + ":" + IPv6_GROUP + ":" + IPv6_GROUP + ":" + IPv6_GROUP);
     private static final Pattern CIDR_PATTERN = Pattern.compile("([^/]+)/(\\d+)");
 
-    private static final String __TRACKER = "SparkDoSFilter.Tracker";
-    private static final String __THROTTLED = "SparkDoSFilter.Throttled";
+    private static final String __TRACKER = "ThrottledRoute.Tracker";
+    private static final String __THROTTLED = "ThrottledRoute.Throttled";
 
     private static final int __DEFAULT_MAX_REQUESTS_PER_SEC = 25;
     private static final int __DEFAULT_DELAY_MS = 100;
@@ -87,7 +86,7 @@ public class SparkDoSFilter extends FilterImpl {
 
     private final RouteImpl route;
 
-    protected SparkDoSFilter(String path, String acceptType, FilterConfig filterConfig, RouteImpl route) {
+    protected ThrottledRoute(String path, String acceptType, FilterConfig filterConfig, RouteImpl route) {
         super(path, acceptType);
         construct(filterConfig);
         this.route = route;
@@ -100,9 +99,9 @@ public class SparkDoSFilter extends FilterImpl {
         UNKNOWN
     }
 
-    private final String _suspended = "SparkDoSFilter@" + Integer.toHexString(hashCode()) + ".SUSPENDED";
-    private final String _resumed = "SparkDoSFilter@" + Integer.toHexString(hashCode()) + ".RESUMED";
-    private final ConcurrentHashMap<String, SparkDoSFilter.RateTracker> _rateTrackers = new ConcurrentHashMap<>();
+    private final String _suspended = "ThrottledRoute@" + Integer.toHexString(hashCode()) + ".SUSPENDED";
+    private final String _resumed = "ThrottledRoute@" + Integer.toHexString(hashCode()) + ".RESUMED";
+    private final ConcurrentHashMap<String, ThrottledRoute.RateTracker> _rateTrackers = new ConcurrentHashMap<>();
     private final List<String> _whitelist = new CopyOnWriteArrayList<>();
     private int _tooManyCode;
     private volatile long _delayMs;
@@ -115,18 +114,18 @@ public class SparkDoSFilter extends FilterImpl {
     private volatile boolean _remotePort;
     private volatile boolean _enabled;
     private volatile String _name;
-    private SparkDoSFilter.Listener _listener = new SparkDoSFilter.Listener();
+    private ThrottledRoute.Listener _listener = new ThrottledRoute.Listener();
     private Semaphore _passes;
     private volatile int _throttledRequests;
     private volatile int _maxRequestsPerSec;
-    private Map<SparkDoSFilter.RateType, Queue<AsyncContext>> _queues = new HashMap<>();
-    private Map<SparkDoSFilter.RateType, AsyncListener> _listeners = new HashMap<>();
+    private Map<ThrottledRoute.RateType, Queue<AsyncContext>> _queues = new HashMap<>();
+    private Map<ThrottledRoute.RateType, AsyncListener> _listeners = new HashMap<>();
     private Scheduler _scheduler;
     private ServletContext _context;
 
     @Override
-    public void handle(Request request, Response response) throws Exception {
-        doFilter(request.raw(), response.raw());
+    public Object handle(Request request, Response response) throws Exception {
+        return doFilter(request, response);
     }
 
     public void construct(FilterConfig filterConfig ) {
@@ -138,9 +137,9 @@ public class SparkDoSFilter extends FilterImpl {
     }
 
     public void init(FilterConfig filterConfig) throws ServletException {
-        for (SparkDoSFilter.RateType rateType : SparkDoSFilter.RateType.values()) {
+        for (ThrottledRoute.RateType rateType : ThrottledRoute.RateType.values()) {
             _queues.put(rateType, new ConcurrentLinkedQueue<>());
-            _listeners.put(rateType, new SparkDoSFilter.DoSAsyncListener(rateType));
+            _listeners.put(rateType, new ThrottledRoute.DoSAsyncListener(rateType));
         }
 
         _rateTrackers.clear();
@@ -228,37 +227,38 @@ public class SparkDoSFilter extends FilterImpl {
     }
 
 
-    protected void doFilter(HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
-
+    protected Object doFilter(Request request, Response response) throws Exception {
+        HttpServletRequest rawRequest = request.raw();
+        HttpServletResponse rawResponse = response.raw();
         // Look for the rate tracker for this request.
-        SparkDoSFilter.RateTracker tracker = (SparkDoSFilter.RateTracker) request.getAttribute(__TRACKER);
+        ThrottledRoute.RateTracker tracker = (ThrottledRoute.RateTracker) rawRequest.getAttribute(__TRACKER);
         if (tracker != null) {
             // Redispatched, RateTracker present in request attributes.
-            throttleRequest(request, response, tracker);
-            return;
+            return throttleRequest(request, response, tracker);
+
         }
 
         // This is the first time we have seen this request.
         if (LOG.isDebugEnabled())
-            LOG.debug("Filtering {}", request);
+            LOG.debug("Filtering {}", rawRequest);
 
         // Get a rate tracker associated with this request, and record one hit.
-        tracker = getRateTracker(request);
+        tracker = getRateTracker(rawRequest);
 
         // Calculate the rate and check if it is over the allowed limit
-        final SparkDoSFilter.OverLimit overLimit = tracker.isRateExceeded(System.nanoTime());
+        final ThrottledRoute.OverLimit overLimit = tracker.isRateExceeded(System.nanoTime());
 
         // Pass it through if we are not currently over the rate limit.
         if (overLimit == null) {
             if (LOG.isDebugEnabled())
-                LOG.debug("Allowing {}", request);
-            return;
+                LOG.debug("Allowing {}", rawRequest);
+            return doRoute(request, response);
         }
 
         // We are over the limit.
 
         // Ask listener what to perform.
-        SparkDoSFilter.Action action = _listener.onRequestOverLimit(request, overLimit, this);
+        ThrottledRoute.Action action = _listener.onRequestOverLimit(rawRequest, overLimit, this);
 
         // Perform action
         long delayMs = getDelayMs();
@@ -266,38 +266,41 @@ public class SparkDoSFilter extends FilterImpl {
         switch (action) {
             case NO_ACTION:
                 if (LOG.isDebugEnabled())
-                    LOG.debug("Allowing over-limit request {}", request);
+                    LOG.debug("Allowing over-limit request {}", rawRequest);
                 break;
             case ABORT:
                 if (LOG.isDebugEnabled())
-                    LOG.debug("Aborting over-limit request {}", request);
-                response.sendError(-1);
-                return;
+                    LOG.debug("Aborting over-limit request {}", rawRequest);
+                rawResponse.sendError(-1);
+                return route.handle(request, response);
             case REJECT:
                 if (insertHeaders)
-                    response.addHeader("SparkDoSFilter", "unavailable");
-                response.sendError(getTooManyCode());
-                return;
+                    rawResponse.addHeader("ThrottledRoute", "unavailable");
+                rawResponse.sendError(getTooManyCode());
+                return route.handle(request, response);
             case DELAY:
                 // Insert a delay before throttling the request,
                 // using the suspend+timeout mechanism of AsyncContext.
                 if (insertHeaders)
-                    response.addHeader("SparkDoSFilter", "delayed");
-                request.setAttribute(__TRACKER, tracker);
-                AsyncContext asyncContext = request.startAsync();
+                    rawResponse.addHeader("ThrottledRoute", "delayed");
+                rawRequest.setAttribute(__TRACKER, tracker);
+                AsyncContext asyncContext = rawRequest.startAsync();
                 if (delayMs > 0)
                     asyncContext.setTimeout(delayMs);
-                asyncContext.addListener(new SparkDoSFilter.DoSTimeoutAsyncListener());
+                asyncContext.addListener(new ThrottledRoute.DoSTimeoutAsyncListener());
                 break;
             case THROTTLE:
-                throttleRequest(request, response, tracker);
-                break;
+                return throttleRequest(request, response, tracker);
+                //break;
         }
+        return route.handle(request, response);
     }
 
-    private void throttleRequest(HttpServletRequest request, HttpServletResponse response, SparkDoSFilter.RateTracker tracker) throws IOException, ServletException {
+    private Object throttleRequest(Request request, Response response, ThrottledRoute.RateTracker tracker) throws Exception {
+        HttpServletRequest rawRequest = request.raw();
+        HttpServletResponse rawResponse = response.raw();
         if (LOG.isDebugEnabled())
-            LOG.debug("Throttling {}", request);
+            LOG.debug("Throttling {}", rawRequest);
 
         // Throttle the request.
         boolean accepted = false;
@@ -307,24 +310,24 @@ public class SparkDoSFilter extends FilterImpl {
             if (!accepted) {
                 // We were not accepted, so either we suspend to wait,
                 // or if we were woken up we insist or we fail.
-                Boolean throttled = (Boolean) request.getAttribute(__THROTTLED);
+                Boolean throttled = true; //(Boolean) request.getAttribute(__THROTTLED);
                 long throttleMs = getThrottleMs();
                 if (!Boolean.TRUE.equals(throttled) && throttleMs > 0) {
-                    SparkDoSFilter.RateType priority = getPriority(request, tracker);
-                    request.setAttribute(__THROTTLED, Boolean.TRUE);
+                    ThrottledRoute.RateType priority = getPriority(rawRequest, tracker);
+                    rawRequest.setAttribute(__THROTTLED, Boolean.TRUE);
                     if (isInsertHeaders())
-                        response.addHeader("SparkDoSFilter", "throttled");
-                    AsyncContext asyncContext = request.startAsync();
-                    request.setAttribute(_suspended, Boolean.TRUE);
+                        rawResponse.addHeader("ThrottledRoute", "throttled");
+                    AsyncContext asyncContext = rawRequest.startAsync();
+                    rawRequest.setAttribute(_suspended, Boolean.TRUE);
                     asyncContext.setTimeout(throttleMs);
                     asyncContext.addListener(_listeners.get(priority));
                     _queues.get(priority).add(asyncContext);
                     if (LOG.isDebugEnabled())
-                        LOG.debug("Throttled {}, {}ms", request, throttleMs);
-                    return;
+                        LOG.debug("Throttled {}, {}ms", rawRequest, throttleMs);
+                    return route.handle(request, response);
                 }
 
-                Boolean resumed = (Boolean) request.getAttribute(_resumed);
+                Boolean resumed = (Boolean) rawRequest.getAttribute(_resumed);
                 if (Boolean.TRUE.equals(resumed)) {
                     // We were resumed, we wait for the next pass.
                     _passes.acquire();
@@ -336,35 +339,35 @@ public class SparkDoSFilter extends FilterImpl {
             if (accepted) {
                 // ...call the chain.
                 if (LOG.isDebugEnabled())
-                    LOG.debug("Allowing {}", request);
+                    LOG.debug("Allowing {}", rawRequest);
                 try {
-                    route.handle((Request) request, (Response) response);
+                    return route.handle(request, response);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
             } else {
                 // ...otherwise fail the request.
                 if (LOG.isDebugEnabled())
-                    LOG.debug("Rejecting {}", request);
+                    LOG.debug("Rejecting {}", rawRequest);
                 if (isInsertHeaders())
-                    response.addHeader("SparkDoSFilter", "unavailable");
-                response.sendError(getTooManyCode());
+                    rawResponse.addHeader("ThrottledRoute", "unavailable");
+                rawResponse.sendError(getTooManyCode());
             }
         } catch (InterruptedException e) {
             LOG.ignore(e);
-            response.sendError(getTooManyCode());
+            rawResponse.sendError(getTooManyCode());
         } finally {
             if (accepted) {
                 try {
                     // Wake up the next highest priority request.
-                    for (SparkDoSFilter.RateType rateType : SparkDoSFilter.RateType.values()) {
+                    for (ThrottledRoute.RateType rateType : ThrottledRoute.RateType.values()) {
                         AsyncContext asyncContext = _queues.get(rateType).poll();
                         if (asyncContext != null) {
                             ServletRequest candidate = asyncContext.getRequest();
                             Boolean suspended = (Boolean) candidate.getAttribute(_suspended);
                             if (Boolean.TRUE.equals(suspended)) {
                                 if (LOG.isDebugEnabled())
-                                    LOG.debug("Resuming {}", request);
+                                    LOG.debug("Resuming {}", rawRequest);
                                 candidate.setAttribute(_resumed, Boolean.TRUE);
                                 asyncContext.dispatch();
                                 break;
@@ -376,6 +379,7 @@ public class SparkDoSFilter extends FilterImpl {
                 }
             }
         }
+        return route.handle(request, response);
     }
 
     protected void doFilterChain(FilterChain chain, final HttpServletRequest request, final HttpServletResponse response) throws IOException, ServletException {
@@ -434,30 +438,30 @@ public class SparkDoSFilter extends FilterImpl {
      * @param tracker the rate tracker for this request
      * @return the priority for this request
      */
-    private SparkDoSFilter.RateType getPriority(HttpServletRequest request, SparkDoSFilter.RateTracker tracker) {
+    private ThrottledRoute.RateType getPriority(HttpServletRequest request, ThrottledRoute.RateTracker tracker) {
         if (extractUserId(request) != null)
-            return SparkDoSFilter.RateType.AUTH;
+            return ThrottledRoute.RateType.AUTH;
         if (tracker != null)
             return tracker.getType();
-        return SparkDoSFilter.RateType.UNKNOWN;
+        return ThrottledRoute.RateType.UNKNOWN;
     }
 
     /**
      * @return the maximum priority that we can assign to a request
      */
-    protected SparkDoSFilter.RateType getMaxPriority() {
-        return SparkDoSFilter.RateType.AUTH;
+    protected ThrottledRoute.RateType getMaxPriority() {
+        return ThrottledRoute.RateType.AUTH;
     }
 
-    public void setListener(SparkDoSFilter.Listener listener) {
+    public void setListener(ThrottledRoute.Listener listener) {
         _listener = Objects.requireNonNull(listener, "Listener may not be null");
     }
 
-    public SparkDoSFilter.Listener getListener() {
+    public ThrottledRoute.Listener getListener() {
         return _listener;
     }
 
-    private void schedule(SparkDoSFilter.RateTracker tracker) {
+    private void schedule(ThrottledRoute.RateTracker tracker) {
         _scheduler.schedule(tracker, getMaxIdleTrackerMs(), TimeUnit.MILLISECONDS);
     }
 
@@ -477,36 +481,36 @@ public class SparkDoSFilter extends FilterImpl {
      * @param request the current request
      * @return the request rate tracker for the current connection
      */
-    SparkDoSFilter.RateTracker getRateTracker(ServletRequest request) {
+    ThrottledRoute.RateTracker getRateTracker(ServletRequest request) {
         HttpSession session = ((HttpServletRequest) request).getSession(false);
 
         String loadId = extractUserId(request);
-        final SparkDoSFilter.RateType type;
+        final ThrottledRoute.RateType type;
         if (loadId != null) {
-            type = SparkDoSFilter.RateType.AUTH;
+            type = ThrottledRoute.RateType.AUTH;
         } else {
             if (isTrackSessions() && session != null && !session.isNew()) {
                 loadId = session.getId();
-                type = SparkDoSFilter.RateType.SESSION;
+                type = ThrottledRoute.RateType.SESSION;
             } else {
                 loadId = isRemotePort() ? createRemotePortId(request) : request.getRemoteAddr();
-                type = SparkDoSFilter.RateType.IP;
+                type = ThrottledRoute.RateType.IP;
             }
         }
 
-        SparkDoSFilter.RateTracker tracker = _rateTrackers.get(loadId);
+        ThrottledRoute.RateTracker tracker = _rateTrackers.get(loadId);
 
         if (tracker == null) {
             boolean allowed = checkWhitelist(request.getRemoteAddr());
             int maxRequestsPerSec = getMaxRequestsPerSec();
-            tracker = allowed ? new SparkDoSFilter.FixedRateTracker(_context, _name, loadId, type, maxRequestsPerSec)
-                              : new SparkDoSFilter.RateTracker(_context, _name, loadId, type, maxRequestsPerSec);
+            tracker = allowed ? new ThrottledRoute.FixedRateTracker(_context, _name, loadId, type, maxRequestsPerSec)
+                              : new ThrottledRoute.RateTracker(_context, _name, loadId, type, maxRequestsPerSec);
             tracker.setContext(_context);
-            SparkDoSFilter.RateTracker existing = _rateTrackers.putIfAbsent(loadId, tracker);
+            ThrottledRoute.RateTracker existing = _rateTrackers.putIfAbsent(loadId, tracker);
             if (existing != null)
                 tracker = existing;
 
-            if (type == SparkDoSFilter.RateType.IP) {
+            if (type == ThrottledRoute.RateType.IP) {
                 // USER_IP expiration from _rateTrackers is handled by the _scheduler
                 _scheduler.schedule(tracker, getMaxIdleTrackerMs(), TimeUnit.MILLISECONDS);
             } else if (session != null) {
@@ -518,7 +522,7 @@ public class SparkDoSFilter extends FilterImpl {
         return tracker;
     }
 
-    private void addToRateTracker(SparkDoSFilter.RateTracker tracker) {
+    private void addToRateTracker(ThrottledRoute.RateTracker tracker) {
         _rateTrackers.put(tracker.getId(), tracker);
     }
 
@@ -829,17 +833,17 @@ public class SparkDoSFilter extends FilterImpl {
     }
 
     /**
-     * Check flag to insert the SparkDoSFilter headers into the response.
+     * Check flag to insert the ThrottledRoute headers into the response.
      *
      * @return value of the flag
      */
-    @ManagedAttribute("inser SparkDoSFilter headers in response")
+    @ManagedAttribute("inser ThrottledRoute headers in response")
     public boolean isInsertHeaders() {
         return _insertHeaders;
     }
 
     /**
-     * Set flag to insert the SparkDoSFilter headers into the response.
+     * Set flag to insert the ThrottledRoute headers into the response.
      *
      * @param value value of the flag
      */
@@ -1002,13 +1006,13 @@ public class SparkDoSFilter extends FilterImpl {
         protected final String _filterName;
         protected transient ServletContext _context;
         protected final String _id;
-        protected final SparkDoSFilter.RateType _type;
+        protected final ThrottledRoute.RateType _type;
         protected final int _maxRequestsPerSecond;
         protected final long[] _timestamps;
 
         protected int _next;
 
-        public RateTracker(ServletContext context, String filterName, String id, SparkDoSFilter.RateType type, int maxRequestsPerSecond) {
+        public RateTracker(ServletContext context, String filterName, String id, ThrottledRoute.RateType type, int maxRequestsPerSecond) {
             _context = context;
             _filterName = filterName;
             _id = id;
@@ -1022,7 +1026,7 @@ public class SparkDoSFilter extends FilterImpl {
          * @param now the time now (in nanoseconds) used to calculate elapsed time since previous requests.
          * @return the current calculated request rate over the last second if rate exceeded, else null.
          */
-        public SparkDoSFilter.OverLimit isRateExceeded(long now) {
+        public ThrottledRoute.OverLimit isRateExceeded(long now) {
             final long last;
             synchronized(this) {
                 last = _timestamps[_next];
@@ -1036,7 +1040,7 @@ public class SparkDoSFilter extends FilterImpl {
 
             long rate = (now - last);
             if (TimeUnit.NANOSECONDS.toSeconds(rate) < 1L) {
-                return new SparkDoSFilter.RateTracker.Overage(Duration.ofNanos(rate), _maxRequestsPerSecond);
+                return new ThrottledRoute.RateTracker.Overage(Duration.ofNanos(rate), _maxRequestsPerSecond);
             }
             return null;
         }
@@ -1045,7 +1049,7 @@ public class SparkDoSFilter extends FilterImpl {
             return _id;
         }
 
-        public SparkDoSFilter.RateType getType() {
+        public ThrottledRoute.RateType getType() {
             return _type;
         }
 
@@ -1059,7 +1063,7 @@ public class SparkDoSFilter extends FilterImpl {
         @Override
         public void valueUnbound(HttpSessionBindingEvent event) {
             //take the tracker out of the list of trackers
-            SparkDoSFilter filter = (SparkDoSFilter) event.getSession().getServletContext().getAttribute(_filterName);
+            ThrottledRoute filter = (ThrottledRoute) event.getSession().getServletContext().getAttribute(_filterName);
             removeFromRateTrackers(filter, _id);
             _context = null;
         }
@@ -1067,17 +1071,17 @@ public class SparkDoSFilter extends FilterImpl {
         @Override
         public void sessionWillPassivate(HttpSessionEvent se) {
             //take the tracker of the list of trackers (if its still there)
-            SparkDoSFilter filter = (SparkDoSFilter) se.getSession().getServletContext().getAttribute(_filterName);
+            ThrottledRoute filter = (ThrottledRoute) se.getSession().getServletContext().getAttribute(_filterName);
             removeFromRateTrackers(filter, _id);
             _context = null;
         }
 
         @Override
         public void sessionDidActivate(HttpSessionEvent se) {
-            SparkDoSFilter.RateTracker tracker = (SparkDoSFilter.RateTracker) se.getSession().getAttribute(__TRACKER);
+            ThrottledRoute.RateTracker tracker = (ThrottledRoute.RateTracker) se.getSession().getAttribute(__TRACKER);
             ServletContext context = se.getSession().getServletContext();
             tracker.setContext(context);
-            SparkDoSFilter filter = (SparkDoSFilter) context.getAttribute(_filterName);
+            ThrottledRoute filter = (ThrottledRoute) context.getAttribute(_filterName);
             if (filter == null) {
                 LOG.info("No filter {} for rate tracker {}", _filterName, tracker);
                 return;
@@ -1089,7 +1093,7 @@ public class SparkDoSFilter extends FilterImpl {
             _context = context;
         }
 
-        protected void removeFromRateTrackers(SparkDoSFilter filter, String id) {
+        protected void removeFromRateTrackers(ThrottledRoute filter, String id) {
             if (filter == null)
                 return;
 
@@ -1098,7 +1102,7 @@ public class SparkDoSFilter extends FilterImpl {
                 LOG.debug("Tracker removed: {}", getId());
         }
 
-        private void addToRateTrackers(SparkDoSFilter filter, SparkDoSFilter.RateTracker tracker) {
+        private void addToRateTrackers(ThrottledRoute filter, ThrottledRoute.RateTracker tracker) {
             if (filter == null)
                 return;
             filter.addToRateTracker(tracker);
@@ -1115,7 +1119,7 @@ public class SparkDoSFilter extends FilterImpl {
             long last = _timestamps[latestIndex];
             boolean hasRecentRequest = last != 0 && TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - last) < 1L;
 
-            SparkDoSFilter filter = (SparkDoSFilter) _context.getAttribute(_filterName);
+            ThrottledRoute filter = (ThrottledRoute) _context.getAttribute(_filterName);
 
             if (hasRecentRequest) {
                 if (filter != null)
@@ -1131,7 +1135,7 @@ public class SparkDoSFilter extends FilterImpl {
             return "RateTracker/" + _id + "/" + _type;
         }
 
-        public class Overage implements SparkDoSFilter.OverLimit {
+        public class Overage implements ThrottledRoute.OverLimit {
 
             private final Duration duration;
             private final long count;
@@ -1142,7 +1146,7 @@ public class SparkDoSFilter extends FilterImpl {
             }
 
             @Override
-            public SparkDoSFilter.RateType getRateType() {
+            public ThrottledRoute.RateType getRateType() {
                 return _type;
             }
 
@@ -1163,7 +1167,7 @@ public class SparkDoSFilter extends FilterImpl {
 
             @Override
             public String toString() {
-                final StringBuilder sb = new StringBuilder(SparkDoSFilter.OverLimit.class.getSimpleName());
+                final StringBuilder sb = new StringBuilder(ThrottledRoute.OverLimit.class.getSimpleName());
                 sb.append('@').append(Integer.toHexString(hashCode()));
                 sb.append("[type=").append(getRateType());
                 sb.append(", id=").append(getRateId());
@@ -1175,14 +1179,14 @@ public class SparkDoSFilter extends FilterImpl {
         }
     }
 
-    private static class FixedRateTracker extends SparkDoSFilter.RateTracker {
+    private static class FixedRateTracker extends ThrottledRoute.RateTracker {
 
-        public FixedRateTracker(ServletContext context, String filterName, String id, SparkDoSFilter.RateType type, int numRecentRequestsTracked) {
+        public FixedRateTracker(ServletContext context, String filterName, String id, ThrottledRoute.RateType type, int numRecentRequestsTracked) {
             super(context, filterName, id, type, numRecentRequestsTracked);
         }
 
         @Override
-        public SparkDoSFilter.OverLimit isRateExceeded(long now) {
+        public ThrottledRoute.OverLimit isRateExceeded(long now) {
             // rate limit is never exceeded, but we keep track of the request timestamps
             // so that we know whether there was recent activity on this tracker
             // and whether it should be expired
@@ -1220,11 +1224,11 @@ public class SparkDoSFilter extends FilterImpl {
         }
     }
 
-    private class DoSAsyncListener extends SparkDoSFilter.DoSTimeoutAsyncListener {
+    private class DoSAsyncListener extends ThrottledRoute.DoSTimeoutAsyncListener {
 
-        private final SparkDoSFilter.RateType priority;
+        private final ThrottledRoute.RateType priority;
 
-        public DoSAsyncListener(SparkDoSFilter.RateType priority) {
+        public DoSAsyncListener(ThrottledRoute.RateType priority) {
             this.priority = priority;
         }
 
@@ -1245,11 +1249,11 @@ public class SparkDoSFilter extends FilterImpl {
          */
         ABORT,
         /**
-         * The request is rejected by sending an error based on {@link SparkDoSFilter#getTooManyCode()}
+         * The request is rejected by sending an error based on {@link ThrottledRoute#getTooManyCode()}
          */
         REJECT,
         /**
-         * The request is delayed based on {@link SparkDoSFilter#getDelayMs()}
+         * The request is delayed based on {@link ThrottledRoute#getDelayMs()}
          */
         DELAY,
         /**
@@ -1258,25 +1262,25 @@ public class SparkDoSFilter extends FilterImpl {
         THROTTLE;
 
         /**
-         * Obtain the Action based on configured {@link SparkDoSFilter#getDelayMs()}
+         * Obtain the Action based on configured {@link ThrottledRoute#getDelayMs()}
          *
          * @param delayMs the delay in milliseconds.
          * @return the Action proposed.
          */
-        public static SparkDoSFilter.Action fromDelay(long delayMs) {
+        public static ThrottledRoute.Action fromDelay(long delayMs) {
             if (delayMs < 0)
-                return SparkDoSFilter.Action.REJECT;
+                return ThrottledRoute.Action.REJECT;
 
             if (delayMs == 0)
-                return SparkDoSFilter.Action.THROTTLE;
+                return ThrottledRoute.Action.THROTTLE;
 
-            return SparkDoSFilter.Action.DELAY;
+            return ThrottledRoute.Action.DELAY;
         }
     }
 
     public interface OverLimit {
 
-        SparkDoSFilter.RateType getRateType();
+        ThrottledRoute.RateType getRateType();
 
         String getRateId();
 
@@ -1294,11 +1298,11 @@ public class SparkDoSFilter extends FilterImpl {
          * Process the onRequestOverLimit() behavior.
          *
          * @param request   the request that is over the limit
-         * @param dosFilter the {@link SparkDoSFilter} that this event occurred on
+         * @param dosFilter the {@link ThrottledRoute} that this event occurred on
          * @return the action to actually perform.
          */
-        public SparkDoSFilter.Action onRequestOverLimit(HttpServletRequest request, SparkDoSFilter.OverLimit overlimit, SparkDoSFilter dosFilter) {
-            SparkDoSFilter.Action action = SparkDoSFilter.Action.fromDelay(dosFilter.getDelayMs());
+        public ThrottledRoute.Action onRequestOverLimit(HttpServletRequest request, ThrottledRoute.OverLimit overlimit, ThrottledRoute dosFilter) {
+            ThrottledRoute.Action action = ThrottledRoute.Action.fromDelay(dosFilter.getDelayMs());
 
             switch (action) {
                 case REJECT:
@@ -1313,6 +1317,20 @@ public class SparkDoSFilter extends FilterImpl {
             }
 
             return action;
+        }
+    }
+
+    protected Object doRoute(Request request, Response response) throws Exception {
+        final Thread thread = Thread.currentThread();
+        Runnable requestTimeout = () -> closeConnection(request.raw(), response.raw(), thread);
+        Scheduler.Task task = _scheduler.schedule(requestTimeout, getMaxRequestMs(), TimeUnit.MILLISECONDS);
+        try
+        {
+            return route.handle(request, response);
+        }
+        finally
+        {
+            task.cancel();
         }
     }
 }
