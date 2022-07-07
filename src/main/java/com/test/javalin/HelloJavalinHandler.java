@@ -1,4 +1,4 @@
-package com.test;
+package com.test.javalin;
 
 import io.javalin.http.Context;
 import io.javalin.http.Handler;

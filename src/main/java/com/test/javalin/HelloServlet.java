@@ -1,4 +1,4 @@
-package com.test;
+package com.test.javalin;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;

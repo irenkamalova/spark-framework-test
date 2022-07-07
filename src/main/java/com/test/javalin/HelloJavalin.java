@@ -1,15 +1,9 @@
-package com.test;
+package com.test.javalin;
 
 import io.javalin.Javalin;
-import io.javalin.Javalin;
-import io.javalin.http.util.RateLimitUtil;
-import io.javalin.http.util.RateLimiter;
-import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Server;
-import org.eclipse.jetty.server.handler.ContextHandlerCollection;
 import org.eclipse.jetty.servlet.FilterHolder;
 import org.eclipse.jetty.servlet.ServletContextHandler;
-import spark.http.matching.MatcherFilter;
 
 import javax.servlet.DispatcherType;
 import javax.servlet.ServletException;
@@ -17,7 +11,6 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.EnumSet;
-import java.util.concurrent.TimeUnit;
 
 public class HelloJavalin {
 
