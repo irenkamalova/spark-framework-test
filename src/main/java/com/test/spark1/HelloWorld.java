@@ -66,6 +66,10 @@ public class HelloWorld {
         });
 
         service.init();
+        // HOW IT WORKS: /hello is throttled and /hello5 is not!
+        // http://localhost:8080/hello
+        // http://localhost:8080/hello5
+        // don't change it, leave it as it is :)
     }
 
     static FilterConfig filterConfig() {
