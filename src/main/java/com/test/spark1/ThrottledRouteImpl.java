@@ -1,4 +1,4 @@
-package com.test;
+package com.test.spark1;
 
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.util.StringUtil;
@@ -46,9 +46,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class ThrottledRoute extends RouteImpl {
+public class ThrottledRouteImpl extends RouteImpl {
 
-    private static final Logger LOG = Log.getLogger(ThrottledRoute.class);
+    private static final Logger LOG = Log.getLogger(ThrottledRouteImpl.class);
 
     private static final String IPv4_GROUP = "(\\d{1,3})";
     private static final Pattern IPv4_PATTERN = Pattern.compile(IPv4_GROUP + "\\." + IPv4_GROUP + "\\." + IPv4_GROUP + "\\." + IPv4_GROUP);
@@ -86,7 +86,7 @@ public class ThrottledRoute extends RouteImpl {
 
     private final RouteImpl route;
 
-    protected ThrottledRoute(String path, String acceptType, FilterConfig filterConfig, RouteImpl route) {
+    public ThrottledRouteImpl(String path, String acceptType, FilterConfig filterConfig, RouteImpl route) {
         super(path, acceptType);
         construct(filterConfig);
         this.route = route;
@@ -101,7 +101,7 @@ public class ThrottledRoute extends RouteImpl {
 
     private final String _suspended = "ThrottledRoute@" + Integer.toHexString(hashCode()) + ".SUSPENDED";
     private final String _resumed = "ThrottledRoute@" + Integer.toHexString(hashCode()) + ".RESUMED";
-    private final ConcurrentHashMap<String, ThrottledRoute.RateTracker> _rateTrackers = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ThrottledRouteImpl.RateTracker> _rateTrackers = new ConcurrentHashMap<>();
     private final List<String> _whitelist = new CopyOnWriteArrayList<>();
     private int _tooManyCode;
     private volatile long _delayMs;
@@ -114,12 +114,12 @@ public class ThrottledRoute extends RouteImpl {
     private volatile boolean _remotePort;
     private volatile boolean _enabled;
     private volatile String _name;
-    private ThrottledRoute.Listener _listener = new ThrottledRoute.Listener();
+    private ThrottledRouteImpl.Listener _listener = new ThrottledRouteImpl.Listener();
     private Semaphore _passes;
     private volatile int _throttledRequests;
     private volatile int _maxRequestsPerSec;
-    private Map<ThrottledRoute.RateType, Queue<AsyncContext>> _queues = new HashMap<>();
-    private Map<ThrottledRoute.RateType, AsyncListener> _listeners = new HashMap<>();
+    private Map<ThrottledRouteImpl.RateType, Queue<AsyncContext>> _queues = new HashMap<>();
+    private Map<ThrottledRouteImpl.RateType, AsyncListener> _listeners = new HashMap<>();
     private Scheduler _scheduler;
     private ServletContext _context;
 
@@ -137,9 +137,9 @@ public class ThrottledRoute extends RouteImpl {
     }
 
     public void init(FilterConfig filterConfig) throws ServletException {
-        for (ThrottledRoute.RateType rateType : ThrottledRoute.RateType.values()) {
+        for (ThrottledRouteImpl.RateType rateType : ThrottledRouteImpl.RateType.values()) {
             _queues.put(rateType, new ConcurrentLinkedQueue<>());
-            _listeners.put(rateType, new ThrottledRoute.DoSAsyncListener(rateType));
+            _listeners.put(rateType, new ThrottledRouteImpl.DoSAsyncListener(rateType));
         }
 
         _rateTrackers.clear();
@@ -231,7 +231,7 @@ public class ThrottledRoute extends RouteImpl {
         HttpServletRequest rawRequest = request.raw();
         HttpServletResponse rawResponse = response.raw();
         // Look for the rate tracker for this request.
-        ThrottledRoute.RateTracker tracker = (ThrottledRoute.RateTracker) rawRequest.getAttribute(__TRACKER);
+        ThrottledRouteImpl.RateTracker tracker = (ThrottledRouteImpl.RateTracker) rawRequest.getAttribute(__TRACKER);
         if (tracker != null) {
             // Redispatched, RateTracker present in request attributes.
             return throttleRequest(request, response, tracker);
@@ -246,7 +246,7 @@ public class ThrottledRoute extends RouteImpl {
         tracker = getRateTracker(rawRequest);
 
         // Calculate the rate and check if it is over the allowed limit
-        final ThrottledRoute.OverLimit overLimit = tracker.isRateExceeded(System.nanoTime());
+        final ThrottledRouteImpl.OverLimit overLimit = tracker.isRateExceeded(System.nanoTime());
 
         // Pass it through if we are not currently over the rate limit.
         if (overLimit == null) {
@@ -258,7 +258,7 @@ public class ThrottledRoute extends RouteImpl {
         // We are over the limit.
 
         // Ask listener what to perform.
-        ThrottledRoute.Action action = _listener.onRequestOverLimit(rawRequest, overLimit, this);
+        ThrottledRouteImpl.Action action = _listener.onRequestOverLimit(rawRequest, overLimit, this);
 
         // Perform action
         long delayMs = getDelayMs();
@@ -287,7 +287,7 @@ public class ThrottledRoute extends RouteImpl {
                 AsyncContext asyncContext = rawRequest.startAsync();
                 if (delayMs > 0)
                     asyncContext.setTimeout(delayMs);
-                asyncContext.addListener(new ThrottledRoute.DoSTimeoutAsyncListener());
+                asyncContext.addListener(new ThrottledRouteImpl.DoSTimeoutAsyncListener());
                 break;
             case THROTTLE:
                 return throttleRequest(request, response, tracker);
@@ -296,7 +296,7 @@ public class ThrottledRoute extends RouteImpl {
         return route.handle(request, response);
     }
 
-    private Object throttleRequest(Request request, Response response, ThrottledRoute.RateTracker tracker) throws Exception {
+    private Object throttleRequest(Request request, Response response, ThrottledRouteImpl.RateTracker tracker) throws Exception {
         HttpServletRequest rawRequest = request.raw();
         HttpServletResponse rawResponse = response.raw();
         if (LOG.isDebugEnabled())
@@ -313,7 +313,7 @@ public class ThrottledRoute extends RouteImpl {
                 Boolean throttled = true; //(Boolean) request.getAttribute(__THROTTLED);
                 long throttleMs = getThrottleMs();
                 if (!Boolean.TRUE.equals(throttled) && throttleMs > 0) {
-                    ThrottledRoute.RateType priority = getPriority(rawRequest, tracker);
+                    ThrottledRouteImpl.RateType priority = getPriority(rawRequest, tracker);
                     rawRequest.setAttribute(__THROTTLED, Boolean.TRUE);
                     if (isInsertHeaders())
                         rawResponse.addHeader("ThrottledRoute", "throttled");
@@ -360,7 +360,7 @@ public class ThrottledRoute extends RouteImpl {
             if (accepted) {
                 try {
                     // Wake up the next highest priority request.
-                    for (ThrottledRoute.RateType rateType : ThrottledRoute.RateType.values()) {
+                    for (ThrottledRouteImpl.RateType rateType : ThrottledRouteImpl.RateType.values()) {
                         AsyncContext asyncContext = _queues.get(rateType).poll();
                         if (asyncContext != null) {
                             ServletRequest candidate = asyncContext.getRequest();
@@ -438,30 +438,30 @@ public class ThrottledRoute extends RouteImpl {
      * @param tracker the rate tracker for this request
      * @return the priority for this request
      */
-    private ThrottledRoute.RateType getPriority(HttpServletRequest request, ThrottledRoute.RateTracker tracker) {
+    private ThrottledRouteImpl.RateType getPriority(HttpServletRequest request, ThrottledRouteImpl.RateTracker tracker) {
         if (extractUserId(request) != null)
-            return ThrottledRoute.RateType.AUTH;
+            return ThrottledRouteImpl.RateType.AUTH;
         if (tracker != null)
             return tracker.getType();
-        return ThrottledRoute.RateType.UNKNOWN;
+        return ThrottledRouteImpl.RateType.UNKNOWN;
     }
 
     /**
      * @return the maximum priority that we can assign to a request
      */
-    protected ThrottledRoute.RateType getMaxPriority() {
-        return ThrottledRoute.RateType.AUTH;
+    protected ThrottledRouteImpl.RateType getMaxPriority() {
+        return ThrottledRouteImpl.RateType.AUTH;
     }
 
-    public void setListener(ThrottledRoute.Listener listener) {
+    public void setListener(ThrottledRouteImpl.Listener listener) {
         _listener = Objects.requireNonNull(listener, "Listener may not be null");
     }
 
-    public ThrottledRoute.Listener getListener() {
+    public ThrottledRouteImpl.Listener getListener() {
         return _listener;
     }
 
-    private void schedule(ThrottledRoute.RateTracker tracker) {
+    private void schedule(ThrottledRouteImpl.RateTracker tracker) {
         _scheduler.schedule(tracker, getMaxIdleTrackerMs(), TimeUnit.MILLISECONDS);
     }
 
@@ -481,36 +481,36 @@ public class ThrottledRoute extends RouteImpl {
      * @param request the current request
      * @return the request rate tracker for the current connection
      */
-    ThrottledRoute.RateTracker getRateTracker(ServletRequest request) {
+    ThrottledRouteImpl.RateTracker getRateTracker(ServletRequest request) {
         HttpSession session = ((HttpServletRequest) request).getSession(false);
 
         String loadId = extractUserId(request);
-        final ThrottledRoute.RateType type;
+        final ThrottledRouteImpl.RateType type;
         if (loadId != null) {
-            type = ThrottledRoute.RateType.AUTH;
+            type = ThrottledRouteImpl.RateType.AUTH;
         } else {
             if (isTrackSessions() && session != null && !session.isNew()) {
                 loadId = session.getId();
-                type = ThrottledRoute.RateType.SESSION;
+                type = ThrottledRouteImpl.RateType.SESSION;
             } else {
                 loadId = isRemotePort() ? createRemotePortId(request) : request.getRemoteAddr();
-                type = ThrottledRoute.RateType.IP;
+                type = ThrottledRouteImpl.RateType.IP;
             }
         }
 
-        ThrottledRoute.RateTracker tracker = _rateTrackers.get(loadId);
+        ThrottledRouteImpl.RateTracker tracker = _rateTrackers.get(loadId);
 
         if (tracker == null) {
             boolean allowed = checkWhitelist(request.getRemoteAddr());
             int maxRequestsPerSec = getMaxRequestsPerSec();
-            tracker = allowed ? new ThrottledRoute.FixedRateTracker(_context, _name, loadId, type, maxRequestsPerSec)
-                              : new ThrottledRoute.RateTracker(_context, _name, loadId, type, maxRequestsPerSec);
+            tracker = allowed ? new ThrottledRouteImpl.FixedRateTracker(_context, _name, loadId, type, maxRequestsPerSec)
+                              : new ThrottledRouteImpl.RateTracker(_context, _name, loadId, type, maxRequestsPerSec);
             tracker.setContext(_context);
-            ThrottledRoute.RateTracker existing = _rateTrackers.putIfAbsent(loadId, tracker);
+            ThrottledRouteImpl.RateTracker existing = _rateTrackers.putIfAbsent(loadId, tracker);
             if (existing != null)
                 tracker = existing;
 
-            if (type == ThrottledRoute.RateType.IP) {
+            if (type == ThrottledRouteImpl.RateType.IP) {
                 // USER_IP expiration from _rateTrackers is handled by the _scheduler
                 _scheduler.schedule(tracker, getMaxIdleTrackerMs(), TimeUnit.MILLISECONDS);
             } else if (session != null) {
@@ -522,7 +522,7 @@ public class ThrottledRoute extends RouteImpl {
         return tracker;
     }
 
-    private void addToRateTracker(ThrottledRoute.RateTracker tracker) {
+    private void addToRateTracker(ThrottledRouteImpl.RateTracker tracker) {
         _rateTrackers.put(tracker.getId(), tracker);
     }
 
@@ -1006,13 +1006,13 @@ public class ThrottledRoute extends RouteImpl {
         protected final String _filterName;
         protected transient ServletContext _context;
         protected final String _id;
-        protected final ThrottledRoute.RateType _type;
+        protected final ThrottledRouteImpl.RateType _type;
         protected final int _maxRequestsPerSecond;
         protected final long[] _timestamps;
 
         protected int _next;
 
-        public RateTracker(ServletContext context, String filterName, String id, ThrottledRoute.RateType type, int maxRequestsPerSecond) {
+        public RateTracker(ServletContext context, String filterName, String id, ThrottledRouteImpl.RateType type, int maxRequestsPerSecond) {
             _context = context;
             _filterName = filterName;
             _id = id;
@@ -1026,7 +1026,7 @@ public class ThrottledRoute extends RouteImpl {
          * @param now the time now (in nanoseconds) used to calculate elapsed time since previous requests.
          * @return the current calculated request rate over the last second if rate exceeded, else null.
          */
-        public ThrottledRoute.OverLimit isRateExceeded(long now) {
+        public ThrottledRouteImpl.OverLimit isRateExceeded(long now) {
             final long last;
             synchronized(this) {
                 last = _timestamps[_next];
@@ -1040,7 +1040,7 @@ public class ThrottledRoute extends RouteImpl {
 
             long rate = (now - last);
             if (TimeUnit.NANOSECONDS.toSeconds(rate) < 1L) {
-                return new ThrottledRoute.RateTracker.Overage(Duration.ofNanos(rate), _maxRequestsPerSecond);
+                return new ThrottledRouteImpl.RateTracker.Overage(Duration.ofNanos(rate), _maxRequestsPerSecond);
             }
             return null;
         }
@@ -1049,7 +1049,7 @@ public class ThrottledRoute extends RouteImpl {
             return _id;
         }
 
-        public ThrottledRoute.RateType getType() {
+        public ThrottledRouteImpl.RateType getType() {
             return _type;
         }
 
@@ -1063,7 +1063,7 @@ public class ThrottledRoute extends RouteImpl {
         @Override
         public void valueUnbound(HttpSessionBindingEvent event) {
             //take the tracker out of the list of trackers
-            ThrottledRoute filter = (ThrottledRoute) event.getSession().getServletContext().getAttribute(_filterName);
+            ThrottledRouteImpl filter = (ThrottledRouteImpl) event.getSession().getServletContext().getAttribute(_filterName);
             removeFromRateTrackers(filter, _id);
             _context = null;
         }
@@ -1071,17 +1071,17 @@ public class ThrottledRoute extends RouteImpl {
         @Override
         public void sessionWillPassivate(HttpSessionEvent se) {
             //take the tracker of the list of trackers (if its still there)
-            ThrottledRoute filter = (ThrottledRoute) se.getSession().getServletContext().getAttribute(_filterName);
+            ThrottledRouteImpl filter = (ThrottledRouteImpl) se.getSession().getServletContext().getAttribute(_filterName);
             removeFromRateTrackers(filter, _id);
             _context = null;
         }
 
         @Override
         public void sessionDidActivate(HttpSessionEvent se) {
-            ThrottledRoute.RateTracker tracker = (ThrottledRoute.RateTracker) se.getSession().getAttribute(__TRACKER);
+            ThrottledRouteImpl.RateTracker tracker = (ThrottledRouteImpl.RateTracker) se.getSession().getAttribute(__TRACKER);
             ServletContext context = se.getSession().getServletContext();
             tracker.setContext(context);
-            ThrottledRoute filter = (ThrottledRoute) context.getAttribute(_filterName);
+            ThrottledRouteImpl filter = (ThrottledRouteImpl) context.getAttribute(_filterName);
             if (filter == null) {
                 LOG.info("No filter {} for rate tracker {}", _filterName, tracker);
                 return;
@@ -1093,7 +1093,7 @@ public class ThrottledRoute extends RouteImpl {
             _context = context;
         }
 
-        protected void removeFromRateTrackers(ThrottledRoute filter, String id) {
+        protected void removeFromRateTrackers(ThrottledRouteImpl filter, String id) {
             if (filter == null)
                 return;
 
@@ -1102,7 +1102,7 @@ public class ThrottledRoute extends RouteImpl {
                 LOG.debug("Tracker removed: {}", getId());
         }
 
-        private void addToRateTrackers(ThrottledRoute filter, ThrottledRoute.RateTracker tracker) {
+        private void addToRateTrackers(ThrottledRouteImpl filter, ThrottledRouteImpl.RateTracker tracker) {
             if (filter == null)
                 return;
             filter.addToRateTracker(tracker);
@@ -1119,7 +1119,7 @@ public class ThrottledRoute extends RouteImpl {
             long last = _timestamps[latestIndex];
             boolean hasRecentRequest = last != 0 && TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - last) < 1L;
 
-            ThrottledRoute filter = (ThrottledRoute) _context.getAttribute(_filterName);
+            ThrottledRouteImpl filter = (ThrottledRouteImpl) _context.getAttribute(_filterName);
 
             if (hasRecentRequest) {
                 if (filter != null)
@@ -1135,7 +1135,7 @@ public class ThrottledRoute extends RouteImpl {
             return "RateTracker/" + _id + "/" + _type;
         }
 
-        public class Overage implements ThrottledRoute.OverLimit {
+        public class Overage implements ThrottledRouteImpl.OverLimit {
 
             private final Duration duration;
             private final long count;
@@ -1146,7 +1146,7 @@ public class ThrottledRoute extends RouteImpl {
             }
 
             @Override
-            public ThrottledRoute.RateType getRateType() {
+            public ThrottledRouteImpl.RateType getRateType() {
                 return _type;
             }
 
@@ -1167,7 +1167,7 @@ public class ThrottledRoute extends RouteImpl {
 
             @Override
             public String toString() {
-                final StringBuilder sb = new StringBuilder(ThrottledRoute.OverLimit.class.getSimpleName());
+                final StringBuilder sb = new StringBuilder(ThrottledRouteImpl.OverLimit.class.getSimpleName());
                 sb.append('@').append(Integer.toHexString(hashCode()));
                 sb.append("[type=").append(getRateType());
                 sb.append(", id=").append(getRateId());
@@ -1179,14 +1179,14 @@ public class ThrottledRoute extends RouteImpl {
         }
     }
 
-    private static class FixedRateTracker extends ThrottledRoute.RateTracker {
+    private static class FixedRateTracker extends ThrottledRouteImpl.RateTracker {
 
-        public FixedRateTracker(ServletContext context, String filterName, String id, ThrottledRoute.RateType type, int numRecentRequestsTracked) {
+        public FixedRateTracker(ServletContext context, String filterName, String id, ThrottledRouteImpl.RateType type, int numRecentRequestsTracked) {
             super(context, filterName, id, type, numRecentRequestsTracked);
         }
 
         @Override
-        public ThrottledRoute.OverLimit isRateExceeded(long now) {
+        public ThrottledRouteImpl.OverLimit isRateExceeded(long now) {
             // rate limit is never exceeded, but we keep track of the request timestamps
             // so that we know whether there was recent activity on this tracker
             // and whether it should be expired
@@ -1224,11 +1224,11 @@ public class ThrottledRoute extends RouteImpl {
         }
     }
 
-    private class DoSAsyncListener extends ThrottledRoute.DoSTimeoutAsyncListener {
+    private class DoSAsyncListener extends ThrottledRouteImpl.DoSTimeoutAsyncListener {
 
-        private final ThrottledRoute.RateType priority;
+        private final ThrottledRouteImpl.RateType priority;
 
-        public DoSAsyncListener(ThrottledRoute.RateType priority) {
+        public DoSAsyncListener(ThrottledRouteImpl.RateType priority) {
             this.priority = priority;
         }
 
@@ -1249,11 +1249,11 @@ public class ThrottledRoute extends RouteImpl {
          */
         ABORT,
         /**
-         * The request is rejected by sending an error based on {@link ThrottledRoute#getTooManyCode()}
+         * The request is rejected by sending an error based on {@link ThrottledRouteImpl#getTooManyCode()}
          */
         REJECT,
         /**
-         * The request is delayed based on {@link ThrottledRoute#getDelayMs()}
+         * The request is delayed based on {@link ThrottledRouteImpl#getDelayMs()}
          */
         DELAY,
         /**
@@ -1262,25 +1262,25 @@ public class ThrottledRoute extends RouteImpl {
         THROTTLE;
 
         /**
-         * Obtain the Action based on configured {@link ThrottledRoute#getDelayMs()}
+         * Obtain the Action based on configured {@link ThrottledRouteImpl#getDelayMs()}
          *
          * @param delayMs the delay in milliseconds.
          * @return the Action proposed.
          */
-        public static ThrottledRoute.Action fromDelay(long delayMs) {
+        public static ThrottledRouteImpl.Action fromDelay(long delayMs) {
             if (delayMs < 0)
-                return ThrottledRoute.Action.REJECT;
+                return ThrottledRouteImpl.Action.REJECT;
 
             if (delayMs == 0)
-                return ThrottledRoute.Action.THROTTLE;
+                return ThrottledRouteImpl.Action.THROTTLE;
 
-            return ThrottledRoute.Action.DELAY;
+            return ThrottledRouteImpl.Action.DELAY;
         }
     }
 
     public interface OverLimit {
 
-        ThrottledRoute.RateType getRateType();
+        ThrottledRouteImpl.RateType getRateType();
 
         String getRateId();
 
@@ -1298,11 +1298,11 @@ public class ThrottledRoute extends RouteImpl {
          * Process the onRequestOverLimit() behavior.
          *
          * @param request   the request that is over the limit
-         * @param dosFilter the {@link ThrottledRoute} that this event occurred on
+         * @param dosFilter the {@link ThrottledRouteImpl} that this event occurred on
          * @return the action to actually perform.
          */
-        public ThrottledRoute.Action onRequestOverLimit(HttpServletRequest request, ThrottledRoute.OverLimit overlimit, ThrottledRoute dosFilter) {
-            ThrottledRoute.Action action = ThrottledRoute.Action.fromDelay(dosFilter.getDelayMs());
+        public ThrottledRouteImpl.Action onRequestOverLimit(HttpServletRequest request, ThrottledRouteImpl.OverLimit overlimit, ThrottledRouteImpl dosFilter) {
+            ThrottledRouteImpl.Action action = ThrottledRouteImpl.Action.fromDelay(dosFilter.getDelayMs());
 
             switch (action) {
                 case REJECT:

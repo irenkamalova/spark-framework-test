@@ -1,29 +1,19 @@
-package com.test;
+package com.test.spark1;
 
-import org.eclipse.jetty.servlet.ServletContextHandler;
 import spark.Request;
 import spark.Response;
 import spark.RouteImpl;
 import spark.Service;
 import spark.Session;
-import spark.embeddedserver.jetty.websocket.WebSocketHandlerWrapper;
-import spark.embeddedserver.jetty.websocket.WebSocketServletContextHandlerFactory;
 import spark.route.HttpMethod;
-import spark.route.Routes;
 
 import javax.servlet.FilterConfig;
-import javax.servlet.Servlet;
-import javax.servlet.ServletConfig;
 import javax.servlet.ServletContext;
-import javax.servlet.http.HttpSession;
 
 import java.util.Enumeration;
-import java.util.Map;
-import java.util.Optional;
 
 import static spark.Service.ignite;
 import static spark.Spark.*;
-import static spark.route.Routes.create;
 
 public class HelloWorld {
     public static void main1(String[] args) {
@@ -58,7 +48,7 @@ public class HelloWorld {
                 return "Hello Route";
             }
         };
-        service.addRoute(HttpMethod.get, new ThrottledRoute("/hello", "*/*", filterConfig, route));
+        service.addRoute(HttpMethod.get, new ThrottledRouteImpl("/hello", "*/*", filterConfig, route));
         //service.addRoute(HttpMethod.get, route);
 
         service.get("/hello5", (request, res) -> {

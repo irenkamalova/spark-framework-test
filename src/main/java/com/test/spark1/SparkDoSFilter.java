@@ -1,4 +1,4 @@
-package com.test;
+package com.test.spark1;
 
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.util.StringUtil;
