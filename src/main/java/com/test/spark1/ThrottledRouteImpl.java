@@ -382,17 +382,6 @@ public class ThrottledRouteImpl extends RouteImpl {
         return route.handle(request, response);
     }
 
-    protected void doFilterChain(FilterChain chain, final HttpServletRequest request, final HttpServletResponse response) throws IOException, ServletException {
-        final Thread thread = Thread.currentThread();
-        Runnable requestTimeout = () -> closeConnection(request, response, thread);
-        Scheduler.Task task = _scheduler.schedule(requestTimeout, getMaxRequestMs(), TimeUnit.MILLISECONDS);
-        try {
-            chain.doFilter(request, response);
-        } finally {
-            task.cancel();
-        }
-    }
-
     /**
      * Invoked when the request handling exceeds {@link #getMaxRequestMs()}.
      * <p>
@@ -418,17 +407,6 @@ public class ThrottledRouteImpl extends RouteImpl {
         }
 
         handlingThread.interrupt();
-    }
-
-    /**
-     * @param request  the current request
-     * @param response the current response
-     * @param thread   the handling thread
-     * @deprecated use {@link #onRequestTimeout(HttpServletRequest, HttpServletResponse, Thread)} instead
-     */
-    @Deprecated
-    protected void closeConnection(HttpServletRequest request, HttpServletResponse response, Thread thread) {
-        onRequestTimeout(request, response, thread);
     }
 
     /**
@@ -1322,7 +1300,7 @@ public class ThrottledRouteImpl extends RouteImpl {
 
     protected Object doRoute(Request request, Response response) throws Exception {
         final Thread thread = Thread.currentThread();
-        Runnable requestTimeout = () -> closeConnection(request.raw(), response.raw(), thread);
+        Runnable requestTimeout = () -> onRequestTimeout(request.raw(), response.raw(), thread);
         Scheduler.Task task = _scheduler.schedule(requestTimeout, getMaxRequestMs(), TimeUnit.MILLISECONDS);
         try
         {
